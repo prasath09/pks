@@ -152,6 +152,7 @@ export default function BillingPanel({ company, defaultBank, inventory }) {
 
   // Selected account (ledger)
 const [selectedAccount, setSelectedAccount] = useState(null);
+const [invoiceType, setInvoiceType] = useState("B2C"); // default
 
 // Account search
 const [accQuery, setAccQuery] = useState("");
@@ -239,11 +240,13 @@ useEffect(() => {
     invoiceNo: "PKS-B-00001",
     date: todayIso,
     ewayNo: "",
+    vehicleNo: "",
     kms: "",
     fromDate: "",
     toDate: "",
     lrDate: todayIso,
-  });
+});
+
 
   // lines + discount
   const [lines, setLines] = useState([emptyLine()]);
@@ -308,6 +311,20 @@ useEffect(() => {
 
   return () => clearTimeout(nameDebRef.current);
 }, [nameQuery]);
+
+useEffect(() => {
+  if (invoiceType === "B2C") {
+    setBuyer((b) => ({ ...b, gstin: "" }));
+  }
+}, [invoiceType]);
+
+<input
+  value={buyer.gstin}
+  disabled={invoiceType === "B2C"}
+  onChange={(e) =>
+    setBuyer((b) => ({ ...b, gstin: e.target.value }))
+  }
+/>
 
 
 const pickName = async (acc) => {
@@ -1247,25 +1264,32 @@ const fillBuyerFromAccount = (acc) => {
         {/* Invoice meta */}
         <div>
           <div className="form-grid-4" style={{ marginTop: 6 }}>
-            <div>
-              <label>Invoice No.</label>
-              <input
-                value={invMeta.invoiceNo}
-                onChange={(e) =>
-                  setInvMeta((m) => ({ ...m, invoiceNo: e.target.value }))
-                }
-              />
-            </div>
-            <div>
-              <label>Date</label>
-              <input
-                type="date"
-                value={invMeta.date}
-                onChange={(e) =>
-                  setInvMeta((m) => ({ ...m, date: e.target.value }))
-                }
-              />
-            </div>
+          <div className="form-grid-3" style={{ marginTop: 6 }}>
+  {/* Invoice Type */}
+  <div>
+    <label>Invoice Type</label>
+    <select
+      value={invoiceType}
+      onChange={(e) => setInvoiceType(e.target.value)}
+    >
+      <option value="B2C">B2C</option>
+      <option value="B2B">B2B</option>
+    </select>
+  </div>
+
+  {/* Date */}
+  <div>
+    <label>Date</label>
+    <input
+      type="date"
+      value={invMeta.date}
+      onChange={(e) =>
+        setInvMeta((m) => ({ ...m, date: e.target.value }))
+      }
+    />
+  </div>
+</div>
+
             <div
               style={{ display: "flex", gap: "20px", alignItems: "center" }}
             >
@@ -1279,6 +1303,17 @@ const fillBuyerFromAccount = (acc) => {
                     }
                   />
                 </div>
+                <div className="meta-field">
+  <             label>Vehicle No</label>
+                  <input
+                    value={invMeta.vehicleNo}
+                    onChange={(e) =>
+                      setInvMeta((m) => ({ ...m, vehicleNo: e.target.value.toUpperCase() }))
+                    }
+                    placeholder="Vehicle No."
+                  />
+                </div>
+
 
                 <div className="meta-field">
                   <label>KMs</label>
@@ -2221,26 +2256,21 @@ const fillBuyerFromAccount = (acc) => {
               return;
             }
 
-            // 1) Build FIFO sale payload for backend
-            /*const salePayload = {
-              bill_no: invMeta.invoiceNo,
-              date: invMeta.date,
-              party_name: buyer.name || "",
-              items: computed.rows.map((r) => ({
-                item_name: r.itemName,
-                qty: Number(r.qty || 0),
-                price: Number(r.rate || 0),
-                gst: Number(r.gstRate || r.gst || 0),
-              })),
-            };*/
-            // 1) Build FIFO sale payload for backend
 const salePayload = {
   bill_no: invMeta.invoiceNo,
-  date: invMeta.date,  
-   account_id: selectedAccount.account_id,        // ISO yyyy-mm-dd (backend will store as DATE)
+  date: invMeta.date,
+  account_id: selectedAccount.account_id,
   party_name: buyer.name || "",
+  invoice_type: invoiceType,
 
-  // header totals
+  // 🚚 TRANSPORT / E-WAY DETAILS (ADD THIS)
+  eway_no: invMeta.ewayNo || "",
+  vehicle_no: invMeta.vehicleNo || "",
+  kms: invMeta.kms ? Number(invMeta.kms) : null,
+  from_date: invMeta.fromDate || null,
+  to_date: invMeta.toDate || null,
+
+  // totals
   taxable: +computed.taxable.toFixed(2),
   discount_amount: +computed.discountAmount.toFixed(2),
   discounted_taxable: +computed.discountedTaxable.toFixed(2),
@@ -2253,22 +2283,7 @@ const salePayload = {
 
   payment_mode: paymentMode || "",
 
-  // split payment info
-  split_enabled: splitEnabled,
-  split1_amount: splitEnabled ? n(split1.amount) : 0,
-  split1_mode: splitEnabled ? split1.mode : "",
-  split1_ref: splitEnabled ? split1.ref : "",
-  split2_amount: splitEnabled ? n(split2.amount) : 0,
-  split2_mode: splitEnabled ? split2.mode : "",
-  split2_ref: splitEnabled ? split2.ref : "",
-
-  // some useful extra buyer meta (optional but nice for reports)
-  buyer_gstin: buyer.gstin || "",
-  buyer_mobile: buyer.mobile || "", 
-  buyer_state: buyer.state || "",
-  buyer_state_code: buyer.stateCode || "",
-
-  // line items for sale_lines table
+  // items
   items: computed.rows.map((r) => ({
     item_name: r.itemName,
     hsn: r.hsn || "",
@@ -2278,6 +2293,7 @@ const salePayload = {
     gst: Number(r.gstRate || r.gst || 0),
   })),
 };
+
 
 
             try {
@@ -2296,9 +2312,9 @@ const salePayload = {
             // 2) Local storage copy (for your own dashboard/history)
             const bill = {
               id: Date.now(),
-               account_id: selectedAccount.account_id,
-  account_name: selectedAccount.name,
-  account_mobile: selectedAccount.mobile || buyer.mobile || "",
+              account_id: selectedAccount.account_id,
+              account_name: selectedAccount.name,
+              account_mobile: selectedAccount.mobile || buyer.mobile || "",
               company,
               buyer,
               consignee: consigneeDifferent ? consignee : buyer,
